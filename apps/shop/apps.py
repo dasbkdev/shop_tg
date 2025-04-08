@@ -1,6 +1,9 @@
 from django.apps import AppConfig
 
-
 class SmegConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.shop'
+
+    def ready(self):
+        # Импорт сигналов для регистрации (если нужно)
+        import apps.shop.signals

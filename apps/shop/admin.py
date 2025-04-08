@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     BotUser, PaymentRequest, Order,
-    Game, CartItem, Country, BotSettings
+    Game, CartItem, Country, BotSettings,
+    Region, DonationItem
 )
 
 @admin.register(BotUser)
@@ -23,12 +24,15 @@ class OrderAdmin(admin.ModelAdmin):
     list_filter = ('is_paid',)
     search_fields = ('user__telegram_id', 'user__username', 'product_name')
 
+class RegionInline(admin.StackedInline):
+    model = Region
+    extra = 1
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):
     list_display = ('name',)
     search_fields = ('name',)
-
+    inlines = [RegionInline]
 
 @admin.register(CartItem)
 class CartItemAdmin(admin.ModelAdmin):
@@ -62,3 +66,12 @@ class BotSettingsAdmin(admin.ModelAdmin):
             'fields': ('request_game_id_text',)
         }),
     )
+
+class DonationItemInline(admin.TabularInline):
+    model = DonationItem
+    extra = 1
+
+@admin.register(Region)
+class RegionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'game')
+    inlines = [DonationItemInline]

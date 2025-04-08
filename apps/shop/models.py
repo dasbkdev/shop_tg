@@ -59,7 +59,6 @@ class Game(models.Model):
     def __str__(self):
         return self.name
 
-
 # === Модель для корзины (товары, которые пользователь выбрал) ===
 class CartItem(models.Model):
     user = models.ForeignKey(BotUser, on_delete=models.CASCADE, related_name='cart_items')
@@ -112,3 +111,23 @@ class BotSettings(models.Model):
 
     def __str__(self):
         return "Настройки Бота (редактируйте меня для изменения текстов/реквизитов)"  
+
+
+class Region(models.Model):
+    game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='regions')
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    region_image = models.ImageField(upload_to='regions/', blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.game.name} | {self.name}"
+
+class DonationItem(models.Model):
+    """Предмет доната, привязанный к конкретному региону."""
+    region = models.ForeignKey(Region, on_delete=models.CASCADE, related_name='donations')
+    name = models.CharField(max_length=255)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    extra_info = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.region.name})"
