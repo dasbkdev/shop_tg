@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Django Migrations
+**/migrations/*.py
+!**/migrations/__init__.py
+
+# Django Database
+db.sqlite3
+*.sqlite3
+
+# Virtual Environments
+venv/
+env/
+
+# VSCode settings (если пользуешься)
+.vscode/
+
+# PyCharm settings
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.*
+
+# Compiled files
+*.egg-info/
+dist/
+build/
+
+# Backup files
+*.bak
+*.swp
+*.tmp
+
+# Node (если вдруг фронтенд есть в проекте)
+node_modules/
+
+# Media files (если будут)
+media/
