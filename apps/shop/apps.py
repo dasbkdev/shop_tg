@@ -5,5 +5,4 @@ class SmegConfig(AppConfig):
     name = 'apps.shop'
 
     def ready(self):
-        # Импорт сигналов для регистрации (если нужно)
         import apps.shop.signals

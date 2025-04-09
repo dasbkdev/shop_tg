@@ -96,18 +96,15 @@ class BotSettings(models.Model):
     # Контакты администратора
     admin_contact = models.CharField(
         max_length=255,
-        default="https://t.me/admin_profile_link",
+        default="https://t.me/dasbkdev",
         help_text="Ссылка на профиль владельца"
     )
-    # Реквизиты для пополнения кошелька
     wallet_requisites = models.TextField(
         default="•  💰 Сумма пополнения: 500.00 С\n•  🏦 Мбанк: +996557336612\n•  👤 Получатель: Расим К."
     )
-    # Текст запроса игрового ID
     request_game_id_text = models.TextField(
         default="Пожалуйста, укажите ваш игровой ID и сервер ID.\nНапример: 487283643 (2451)"
     )
-    # Любые дополнительные поля
 
     def __str__(self):
         return "Настройки Бота (редактируйте меня для изменения текстов/реквизитов)"  

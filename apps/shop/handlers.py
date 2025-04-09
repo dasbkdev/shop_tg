@@ -105,13 +105,17 @@ async def profile_view(message: Message):
 async def cb_change_region(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("Выберите вашу страну из списка ниже:")
     countries = await sync_to_async(list)(Country.objects.all())
-    inline_rows = []
-    for country in countries:
-        inline_rows.append([
-            InlineKeyboardButton(text=country.name, callback_data=f"select_country_{country.id}")
-        ])
-    inline_rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
-    markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
+    inline_keyboard = []
+    temp_row = []
+    for idx, country in enumerate(countries, start=1):
+        temp_row.append(InlineKeyboardButton(text=country.name, callback_data=f"select_country_{country.id}"))
+        if idx % 2 == 0:
+            inline_keyboard.append(temp_row)
+            temp_row = []
+    if temp_row:
+        inline_keyboard.append(temp_row)
+    inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
+    markup = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
     await call.message.edit_reply_markup(markup)
 
 @router.callback_query(F.data.startswith("select_country_"))
@@ -202,17 +206,15 @@ async def handle_receipt(message: Message):
 # ======================
 # Каталог и выбор игры, региона, доната
 # ======================
-
 @router.message(F.text == "🛒 Каталог")
 async def catalog_view(message: Message):
-    await message.answer("Выберите из списка:")
     games = await sync_to_async(list)(Game.objects.all())
     inline_rows = [
         [InlineKeyboardButton(text=game.name, callback_data=f"choose_game_{game.id}")]
         for game in games
     ]
     markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
-    await message.answer("Список игр:", reply_markup=markup)
+    await message.answer("Выберите из списка:", reply_markup=markup)
 
 @router.callback_query(F.data.startswith("choose_game_"))
 async def cb_choose_game(call: CallbackQuery):
@@ -239,7 +241,6 @@ async def cb_choose_game(call: CallbackQuery):
     else:
         await call.message.edit_text(caption, reply_markup=markup)
 
-
 @router.callback_query(F.data == "back_to_catalog")
 async def cb_back_to_catalog(call: CallbackQuery):
     await catalog_view(call.message)
@@ -263,7 +264,7 @@ async def cb_choose_region(call: CallbackQuery):
             )
         ])
     
-    game_id = await sync_to_async(lambda: region.game.id)()
+    game_id = region.game.id
     inline_rows.append([
         InlineKeyboardButton(
             text="⬅️ Назад",
@@ -308,30 +309,26 @@ async def cb_back_to_regions(call: CallbackQuery):
     await call.message.edit_text(text)
     await call.message.edit_reply_markup(InlineKeyboardMarkup(inline_keyboard=inline_rows))
 
+# ===== Изменения для выбора доната =====
+
 @router.callback_query(F.data.startswith("select_donation_"))
 async def cb_select_donation(call: CallbackQuery, state: FSMContext):
     donation_id = call.data.split("_")[-1]
     donation = await sync_to_async(DonationItem.objects.select_related("region__game").get)(id=donation_id)
     user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
-
-    await state.set_state(CheckOutState.waiting_for_game_account)
-    await state.update_data({
-        "donation_id": donation.id,
-        "price": float(donation.price),
-        "donation_name": donation.name,
-        "region_name": donation.region.name,
-        "game_name": donation.region.game.name,
-    })
-
-    await call.message.answer(
-        f"Вы выбрали донат: {donation.name} ({donation.price} С)\n"
-        "Пожалуйста, отправьте ваш игровой ID / ник:"
+    await sync_to_async(CartItem.objects.create)(
+         user=user,
+         game=donation.region.game,
+         quantity=1
     )
+    await call.message.answer("Товар успешно добавлен в корзину")
+
+
+# =========================================
 
 # ======================
 # Корзина
 # ======================
-
 @router.message(F.text == "🛍 Корзина")
 async def cart_view(message: Message):
     user = await get_or_create_user(message)
@@ -354,7 +351,6 @@ async def cart_view(message: Message):
     )
     await message.answer(text, reply_markup=markup)
 
-
 @router.callback_query(F.data == "remove_last_cart_item")
 async def cb_remove_last_cart_item(call: CallbackQuery):
     user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
@@ -374,7 +370,6 @@ async def cb_clear_cart(call: CallbackQuery):
 # ======================
 # Оформление заказа
 # ======================
-
 @router.callback_query(F.data == "checkout_order")
 async def cb_checkout_order(call: CallbackQuery):
     await call.message.edit_text("Выберите способ оплаты:")
@@ -412,15 +407,11 @@ async def process_game_account(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=markup)
 
     user = await get_or_create_user(message)
-    cart_items = await sync_to_async(list)(
-        CartItem.objects.select_related("game").filter(user=user)
-    )
-
+    cart_items = await sync_to_async(list)(CartItem.objects.filter(user=user))
     for item in cart_items:
-        game_name = await sync_to_async(lambda: item.game.name)()
         await sync_to_async(Order.objects.create)(
             user=user,
-            product_name=game_name,
+            product_name=item.game.name,
             price=Decimal("355.00"),
             is_paid=False,
             game_account_info=game_account_info
@@ -429,20 +420,34 @@ async def process_game_account(message: Message, state: FSMContext):
     await sync_to_async(CartItem.objects.filter(user=user).delete)()
     await state.clear()
 
-
 @router.callback_query(F.data == "pay_with_wallet")
 async def cb_pay_with_wallet(call: CallbackQuery):
-    await call.message.answer("Идет обработка оплаты через кошелек, подождите...")
-    token = await moogold_login()
-    if not token:
+    user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
+    cart_items = await sync_to_async(list)(CartItem.objects.filter(user=user))
+
+    if not cart_items:
+        await call.message.answer("Ваша корзина пуста.")
+        return
+
+    game = cart_items[0].game  # Получаем первую игру из корзины
+    product_id = cart_items[0].game.id  # ID товара, может быть изменено
+    quantity = len(cart_items)  # Количество товаров
+    character_id = "123456789"  # Character ID, должен быть введен пользователем
+    server_id = "3402"  # Сервер, задается статически или вводится пользователем
+    partner_order_id = f"ORDER-{user.telegram_id}-{int(time.time())}"  # Уникальный ID заказа
+
+    headers = await moogold_login()
+    if not headers:
         await call.message.answer("Ошибка авторизации в Moogold.")
         return
-    user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
-    purchase_response = await moogold_purchase(token, amount=355.00, user_id=user.telegram_id)
-    if purchase_response and purchase_response.get("success"):
-        await call.message.answer("Оплата прошла успешно!")
+
+    result = await moogold_create_order(headers, character_id, server_id, product_id, quantity, partner_order_id)
+
+    if result.get("status"):
+        await call.message.answer(f"✅ Заказ успешно создан! Номер заказа: {result['account_details']['order_id']}.")
+        await sync_to_async(CartItem.objects.filter(user=user).delete)()  # Очищаем корзину
     else:
-        await call.message.answer("Ошибка при оплате через кошелек.")
+        await call.message.answer(f"❌ Ошибка при создании заказа: {result['message']}")
 
 # ======================
 # История заказов
@@ -477,7 +482,6 @@ async def support_view(message: Message):
 # ======================
 # Обработчик кнопки "Меню" (Если понадобится для возврата)
 # ======================
-
 @router.message(F.text == "🏠 Меню")
 async def back_to_menu_cmd(message: Message):
     await message.answer("Главное меню:", reply_markup=main_menu())
