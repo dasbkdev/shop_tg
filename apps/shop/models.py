@@ -22,7 +22,7 @@ class PaymentRequest(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     receipt_file = models.FileField(upload_to='receipts/', blank=True, null=True)
     confirmed = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
     # Статус для удобства
     STATUS_CHOICES = [
         ('pending', 'В обработке'),
@@ -41,7 +41,7 @@ class Order(models.Model):
     product_name = models.CharField(max_length=255)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     is_paid = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(default=timezone.now)
     # Можно добавить поле для хранения игрового ID
     game_account_info = models.CharField(max_length=255, blank=True, null=True)
 
@@ -64,7 +64,7 @@ class CartItem(models.Model):
     user = models.ForeignKey(BotUser, on_delete=models.CASCADE, related_name='cart_items')
     game = models.ForeignKey(Game, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField(default=1)
-    added_at = models.DateTimeField(auto_now_add=True)
+    added_at = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
         return f"CartItem | {self.user} | {self.game} (x{self.quantity})"

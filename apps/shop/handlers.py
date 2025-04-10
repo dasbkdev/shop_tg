@@ -10,13 +10,15 @@ from aiogram.types import (
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from .models import (
     BotUser, PaymentRequest, Order, Game, CartItem,
     Country, BotSettings, Region, DonationItem
 )
 from .mogold import moogold_login, moogold_purchase
+
+from django.core.files.base import ContentFile
+
 
 router = Router()
 logging.basicConfig(level=logging.DEBUG)
@@ -103,20 +105,25 @@ async def profile_view(message: Message):
 
 @router.callback_query(F.data == "change_region")
 async def cb_change_region(call: CallbackQuery, state: FSMContext):
-    await call.message.edit_text("Выберите вашу страну из списка ниже:")
     countries = await sync_to_async(list)(Country.objects.all())
-    inline_keyboard = []
-    temp_row = []
-    for idx, country in enumerate(countries, start=1):
-        temp_row.append(InlineKeyboardButton(text=country.name, callback_data=f"select_country_{country.id}"))
-        if idx % 2 == 0:
-            inline_keyboard.append(temp_row)
-            temp_row = []
-    if temp_row:
-        inline_keyboard.append(temp_row)
-    inline_keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
-    markup = InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
-    await call.message.edit_reply_markup(markup)
+    keyboard = []
+    for i in range(0, len(countries), 2):
+        row = [
+            InlineKeyboardButton(
+                text=c.name,
+                callback_data=f"select_country_{c.id}"
+            ) for c in countries[i:i+2]
+        ]
+        keyboard.append(row)
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+    # один вызов — и текст, и новая клавиатура сразу появятся
+    await call.message.edit_text(
+        "Выберите вашу страну из списка ниже:",
+        reply_markup=markup
+    )
+
 
 @router.callback_query(F.data.startswith("select_country_"))
 async def cb_select_country(call: CallbackQuery):
@@ -193,16 +200,42 @@ async def cb_info_about_receipt(call: CallbackQuery):
 
 @router.message(F.document | F.photo)
 async def handle_receipt(message: Message):
+    # 1. Получаем или создаём пользователя
     user = await get_or_create_user(message)
-    file_id = message.document.file_id if message.document else message.photo[-1].file_id
-    await sync_to_async(PaymentRequest.objects.create)(
+
+    if message.document:
+        file_id = message.document.file_id
+        filename = message.document.file_name or f"{file_id}.pdf"
+    else:
+        photo = message.photo[-1]
+        file_id = photo.file_id
+        filename = f"{file_id}.jpg"
+
+    # 3. Получаем у Telegram путь к файлу и скачиваем его
+    tg_file = await message.bot.get_file(file_id)
+    file_path = tg_file.file_path  # что‑то вроде "documents/ABC123.pdf"
+    file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{file_path}"
+    resp = requests.get(file_url)
+    resp.raise_for_status()
+    content = resp.content
+
+    # 4. Создаём запись в БД (без файла)
+    payment = await sync_to_async(PaymentRequest.objects.create)(
         user=user,
         amount=Decimal("0.00"),
-        receipt_file=file_id,
         confirmed=False
     )
-    await message.answer("✅ Чек получен. Статус: в обработке. Ожидайте подтверждения администрацией.")
 
+    # 5. Сохраняем реальный файл в поле receipt_file
+    await sync_to_async(payment.receipt_file.save)(
+        filename,
+        ContentFile(content)
+    )
+
+    # 6. Уведомляем пользователя
+    await message.answer(
+        "✅ Чек получен и сохранён. Статус: в обработке. Ожидайте подтверждения администрацией."
+    )
 # ======================
 # Каталог и выбор игры, региона, доната
 # ======================
@@ -245,69 +278,73 @@ async def cb_choose_game(call: CallbackQuery):
 async def cb_back_to_catalog(call: CallbackQuery):
     await catalog_view(call.message)
 
+
 @router.callback_query(F.data.startswith("choose_region_"))
 async def cb_choose_region(call: CallbackQuery):
-    region_id = call.data.split("_")[-1]
+    await call.answer()
+
+    region_id = int(call.data.split("_")[-1])
+    # Загружаем регион (без game, нам нужен только region.name и region.game_id)
     region = await sync_to_async(Region.objects.get)(id=region_id)
-    
-    donations = await sync_to_async(list)(DonationItem.objects.filter(region=region))
+
+    donations = await sync_to_async(
+        lambda: list(DonationItem.objects.filter(region=region))
+    )()
     if not donations:
-        await call.message.answer("Для выбранного региона пока нет донат-предложений. Пожалуйста, выберите другой регион.")
+        await call.message.edit_text(
+            "Для выбранного региона пока нет донат‑предложений.\n"
+            "Пожалуйста, выберите другой регион."
+        )
         return
-    
-    inline_rows = []
-    for donation in donations:
-        inline_rows.append([
-            InlineKeyboardButton(
-                text=f"{donation.name} — {donation.price} С",
-                callback_data=f"select_donation_{donation.id}"
-            )
-        ])
-    
-    game_id = region.game.id
+
+    text = f"💰 Доступные валюты для региона «{region.name}»:\n\n"
+    for d in donations:
+        text += f"• {d.name} — {d.price} С\n"
+
+    inline_rows = [
+        [InlineKeyboardButton(
+            text=f"{d.name} — {d.price} С",
+            callback_data=f"select_donation_{d.id}"
+        )]
+        for d in donations
+    ]
+    # Здесь используем region.game_id, а не region.game.id
     inline_rows.append([
         InlineKeyboardButton(
-            text="⬅️ Назад",
-            callback_data=f"back_to_regions_{game_id}"
+            text="⬅️ Назад к регионам",
+            callback_data=f"back_to_regions_{region.game_id}"
         )
     ])
     markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
-    
-    caption = f"Регион: {region.name}"
-    if region.description:
-        caption += f"\n\n{region.description}"
-    
-    if region.region_image:
-        await call.message.delete()
-        await call.message.answer_photo(
-            photo=region.region_image.url,
-            caption=caption,
-            reply_markup=markup
-        )
-    else:
-        await call.message.edit_text(caption, reply_markup=markup)
+
+    await call.message.edit_text(text, reply_markup=markup)
+
 
 @router.callback_query(F.data.startswith("back_to_regions_"))
 async def cb_back_to_regions(call: CallbackQuery):
-    game_id = call.data.split("_")[-1]
-    try:
-        game = await sync_to_async(Game.objects.get)(id=game_id)
-    except Game.DoesNotExist:
-        await call.message.answer("Игра не найдена.")
-        return
-    regions = await sync_to_async(list)(Region.objects.filter(game=game))
-    inline_rows = []
-    for region in regions:
-        inline_rows.append([
-            InlineKeyboardButton(
-                text=f"🌍 {region.name}",
-                callback_data=f"choose_region_{region.id}"
-            )
-        ])
-    inline_rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_catalog")])
-    text = f"Выберите регион для игры: {game.name}"
-    await call.message.edit_text(text)
-    await call.message.edit_reply_markup(InlineKeyboardMarkup(inline_keyboard=inline_rows))
+    await call.answer()
+
+    game_id = int(call.data.split("_")[-1])
+    # Загружаем игру и регионы
+    game = await sync_to_async(lambda: Region.objects.none())()  # только пример
+    # На самом деле вам нужно Game.objects.get, но это вы уже делали
+    game = await sync_to_async(Game.objects.get)(id=game_id)
+    regions = await sync_to_async(lambda: list(Region.objects.filter(game=game)))()
+
+    inline_rows = [
+        [InlineKeyboardButton(
+            text=f"🌍 {r.name}",
+            callback_data=f"choose_region_{r.id}"
+        )]
+        for r in regions
+    ]
+    inline_rows.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_catalog")
+    ])
+    text = f"🌍 Выберите регион для игры: {game.name}"
+    markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
+
+    await call.message.edit_text(text, reply_markup=markup)
 
 # ===== Изменения для выбора доната =====
 

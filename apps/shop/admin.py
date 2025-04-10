@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.translation import gettext_lazy as _
+from django.utils.html import format_html
 from .models import (
     BotUser, PaymentRequest, Order,
     Game, CartItem, Country, BotSettings,
@@ -38,9 +39,11 @@ class PaymentRequestAdmin(admin.ModelAdmin):
     list_filter = ('confirmed', 'status')
     search_fields = ('user__telegram_id', 'user__username')
 
+    readonly_fields = ('receipt_preview',)
+
     fieldsets = (
         (_("Основные данные"), {
-            'fields': ('user', 'amount', 'receipt_file', 'status', 'confirmed')
+            'fields': ('user', 'amount', 'receipt_file', 'status', 'confirmed', 'receipt_preview')
         }),
         (_("Временная метка"), {
             'fields': ('created_at',),
@@ -50,6 +53,19 @@ class PaymentRequestAdmin(admin.ModelAdmin):
 
     verbose_name = _("Запрос на оплату")
     verbose_name_plural = _("Запросы на оплату")
+
+    def receipt_preview(self, obj):
+        if obj.receipt_file:
+            url = obj.receipt_file.url
+            name = obj.receipt_file.name.split('/')[-1]
+            # ссылка + встроенный предпросмотр PDF
+            return format_html(
+                '<a href="{0}" target="_blank">{1}</a><br>'
+                '<iframe src="{0}" width="600" height="400"></iframe>',
+                url, name
+            )
+        return "—"
+    receipt_preview.short_description = "Чек (PDF)"
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
