@@ -439,20 +439,34 @@ async def donation_game_account_received(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    headers = await moogold_login()
-    if not headers:
-        await message.answer("❌ Не удалось авторизоваться в Moogold.")
-        await state.clear()
-        return
-
-
+    # Подготовка параметров для заказа через MooGold API
     character_id = user.telegram_id           
     server_id = "3402"                         
     product_id = donation_id                  
     quantity = 1
     partner_order_id = f"ORDER-{user.telegram_id}-{int(time.time())}"
-
     
+    # Формируем payload для подписи и запроса
+    payload = {
+        "path": "order/create_order",
+        "data": {
+            "category": 1,  # для Direct Top Up, или 2 для eVouchers
+            "product-id": str(product_id),
+            "quantity": str(quantity),
+            "User ID": str(character_id),
+            "Server": str(server_id)
+        },
+        "partnerOrderId": partner_order_id
+    }
+    
+    # Генерация заголовков, включая Basic Auth, timestamp и auth подпись
+    headers = await moogold_login("order/create_order", payload)
+    if not headers:
+        await message.answer("❌ Не удалось авторизоваться в MooGold.")
+        await state.clear()
+        return
+
+    # Выполняем создание заказа через MooGold API
     moogold_result = await moogold_create_order(headers, character_id, server_id, product_id, quantity, partner_order_id)
 
     if moogold_result and moogold_result.get("success"):
@@ -469,7 +483,7 @@ async def donation_game_account_received(message: Message, state: FSMContext):
         await message.answer("✅ Заказ успешно оплачен и донат отправлен!")
     else:
         error_text = moogold_result.get("message") if moogold_result else "Неизвестная ошибка."
-        await message.answer(f"❌ Ошибка при оформлении заказа через Moogold: {error_text}")
+        await message.answer(f"❌ Ошибка при оформлении заказа через MooGold: {error_text}")
 
     await state.clear()
 
