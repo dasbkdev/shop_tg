@@ -1,16 +1,15 @@
 import time
-import hashlib
 import base64
 import aiohttp
 from decouple import config
 
 # Получаем параметры из .env
-MOOGOLD_USERNAME = config('MOOGOLD_USERNAME')  # Партнер ID
+MOOGOLD_USERNAME = config('MOOGOLD_USERNAME')  # Партнер ID (обычно почта)
 MOOGOLD_SECRET_KEY = config('MOOGOLD_SECRET_KEY')  # Секретный ключ
 
 async def moogold_login():
     """
-    Функция для создания заголовков авторизации Moogold API.
+    Функция для создания заголовков авторизации Moogold API через Basic Auth.
     """
     try:
         timestamp = str(int(time.time()))
@@ -36,7 +35,7 @@ async def moogold_create_order(headers, character_id, server_id, product_id, qua
         "path": "order/create_order",
         "data": {
             "category": "1",
-            "product-id": product_id,
+            "product-id": str(product_id),
             "quantity": str(quantity),
             "User ID": str(character_id),
             "Server": str(server_id)
@@ -48,28 +47,11 @@ async def moogold_create_order(headers, character_id, server_id, product_id, qua
         try:
             async with session.post(url, json=data, headers=headers) as response:
                 if response.status == 200:
-                    return await response.json()
+                    try:
+                        return await response.json()
+                    except Exception as decode_error:
+                        return {"status": False, "message": f"Ошибка декодирования JSON: {decode_error}"}
                 else:
                     return {"status": False, "message": f"Ошибка API Moogold: {response.status}"}
         except Exception as e:
             return {"status": False, "message": f"Ошибка запроса к API Moogold: {e}"}
-
-async def moogold_purchase(token, amount, user_id):
-    url = "https://doc.moogold.com/api/purchase"
-    async with aiohttp.ClientSession() as session:
-        data = {
-            "amount": amount,
-            "userId": user_id
-        }
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "API-Key": MOOGOLD_API_KEY,
-            "Secret-Key": MOOGOLD_SECRET_KEY
-        }
-        async with session.post(url, json=data, headers=headers) as resp:
-            if resp.status == 200:
-                result = await resp.json()
-                return result
-            else:
-                print("Ошибка при покупке", resp.status)
-                return None

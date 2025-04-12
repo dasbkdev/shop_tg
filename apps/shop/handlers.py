@@ -1,6 +1,9 @@
 import logging
+import time
 from decimal import Decimal
 from asgiref.sync import sync_to_async
+import requests
+
 from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
@@ -15,10 +18,9 @@ from .models import (
     BotUser, PaymentRequest, Order, Game, CartItem,
     Country, BotSettings, Region, DonationItem
 )
-from .mogold import moogold_login, moogold_purchase
+from .mogold import moogold_login, moogold_create_order
 
 from django.core.files.base import ContentFile
-
 
 router = Router()
 logging.basicConfig(level=logging.DEBUG)
@@ -118,12 +120,10 @@ async def cb_change_region(call: CallbackQuery, state: FSMContext):
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")])
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-    # один вызов — и текст, и новая клавиатура сразу появятся
     await call.message.edit_text(
         "Выберите вашу страну из списка ниже:",
         reply_markup=markup
     )
-
 
 @router.callback_query(F.data.startswith("select_country_"))
 async def cb_select_country(call: CallbackQuery):
@@ -140,7 +140,7 @@ async def cb_select_country(call: CallbackQuery):
         f"Регион успешно изменён на: {country_obj.name}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")]
+                [InlineKeyboardButton(text="⬅️ Вернуться", callback_data="back_to_profile")]
             ]
         )
     )
@@ -200,9 +200,7 @@ async def cb_info_about_receipt(call: CallbackQuery):
 
 @router.message(F.document | F.photo)
 async def handle_receipt(message: Message):
-    # 1. Получаем или создаём пользователя
     user = await get_or_create_user(message)
-
     if message.document:
         file_id = message.document.file_id
         filename = message.document.file_name or f"{file_id}.pdf"
@@ -211,31 +209,29 @@ async def handle_receipt(message: Message):
         file_id = photo.file_id
         filename = f"{file_id}.jpg"
 
-    # 3. Получаем у Telegram путь к файлу и скачиваем его
     tg_file = await message.bot.get_file(file_id)
-    file_path = tg_file.file_path  # что‑то вроде "documents/ABC123.pdf"
+    file_path = tg_file.file_path
     file_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{file_path}"
-    resp = requests.get(file_url)
-    resp.raise_for_status()
-    content = resp.content
+    # Заменяем синхронный requests.get на обёртку через sync_to_async, чтобы не блокировать цикл событий
+    response = await sync_to_async(requests.get)(file_url)
+    response.raise_for_status()
+    content = response.content
 
-    # 4. Создаём запись в БД (без файла)
     payment = await sync_to_async(PaymentRequest.objects.create)(
         user=user,
         amount=Decimal("0.00"),
         confirmed=False
     )
 
-    # 5. Сохраняем реальный файл в поле receipt_file
     await sync_to_async(payment.receipt_file.save)(
         filename,
         ContentFile(content)
     )
 
-    # 6. Уведомляем пользователя
     await message.answer(
         "✅ Чек получен и сохранён. Статус: в обработке. Ожидайте подтверждения администрацией."
     )
+
 # ======================
 # Каталог и выбор игры, региона, доната
 # ======================
@@ -278,18 +274,13 @@ async def cb_choose_game(call: CallbackQuery):
 async def cb_back_to_catalog(call: CallbackQuery):
     await catalog_view(call.message)
 
-
 @router.callback_query(F.data.startswith("choose_region_"))
 async def cb_choose_region(call: CallbackQuery):
     await call.answer()
-
     region_id = int(call.data.split("_")[-1])
-    # Загружаем регион (без game, нам нужен только region.name и region.game_id)
     region = await sync_to_async(Region.objects.get)(id=region_id)
 
-    donations = await sync_to_async(
-        lambda: list(DonationItem.objects.filter(region=region))
-    )()
+    donations = await sync_to_async(list)(DonationItem.objects.filter(region=region))
     if not donations:
         await call.message.edit_text(
             "Для выбранного региона пока нет донат‑предложений.\n"
@@ -297,18 +288,17 @@ async def cb_choose_region(call: CallbackQuery):
         )
         return
 
-    text = f"💰 Доступные валюты для региона «{region.name}»:\n\n"
+    text = f"💰 Доступные донаты для региона «{region.name}»:\n\n"
     for d in donations:
-        text += f"• {d.name} — {d.price} С\n"
+        text += f"• {d.name} — {d.bot_price} С\n"
 
     inline_rows = [
         [InlineKeyboardButton(
-            text=f"{d.name} — {d.price} С",
+            text=f"{d.name} — {d.bot_price} С",
             callback_data=f"select_donation_{d.id}"
         )]
         for d in donations
     ]
-    # Здесь используем region.game_id, а не region.game.id
     inline_rows.append([
         InlineKeyboardButton(
             text="⬅️ Назад к регионам",
@@ -316,21 +306,14 @@ async def cb_choose_region(call: CallbackQuery):
         )
     ])
     markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
-
     await call.message.edit_text(text, reply_markup=markup)
-
 
 @router.callback_query(F.data.startswith("back_to_regions_"))
 async def cb_back_to_regions(call: CallbackQuery):
     await call.answer()
-
     game_id = int(call.data.split("_")[-1])
-    # Загружаем игру и регионы
-    game = await sync_to_async(lambda: Region.objects.none())()  # только пример
-    # На самом деле вам нужно Game.objects.get, но это вы уже делали
     game = await sync_to_async(Game.objects.get)(id=game_id)
-    regions = await sync_to_async(lambda: list(Region.objects.filter(game=game)))()
-
+    regions = await sync_to_async(list)(Region.objects.filter(game=game))
     inline_rows = [
         [InlineKeyboardButton(
             text=f"🌍 {r.name}",
@@ -343,36 +326,34 @@ async def cb_back_to_regions(call: CallbackQuery):
     ])
     text = f"🌍 Выберите регион для игры: {game.name}"
     markup = InlineKeyboardMarkup(inline_keyboard=inline_rows)
-
     await call.message.edit_text(text, reply_markup=markup)
 
-# ===== Изменения для выбора доната =====
-
+# ===== Обработка выбора доната =====
 @router.callback_query(F.data.startswith("select_donation_"))
 async def cb_select_donation(call: CallbackQuery, state: FSMContext):
     donation_id = call.data.split("_")[-1]
     donation = await sync_to_async(DonationItem.objects.select_related("region__game").get)(id=donation_id)
     user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
-    await sync_to_async(CartItem.objects.create)(
-         user=user,
-         game=donation.region.game,
-         quantity=1
+    
+    # Сохраняем данные о донате для последующего оформления заказа
+    await state.update_data(
+        donation_id=donation.id,
+        donation_name=donation.name,
+        game_name=donation.region.game.name,
+        region_name=donation.region.name,
+        site_price=float(donation.site_price),  # Реальная цена доната (для Moogold API)
+        bot_price=float(donation.bot_price)       # Цена списания с кошелька
     )
-    await call.message.answer("Товар успешно добавлен в корзину")
-
-
-# =========================================
+    
+    await call.message.answer("Донат выбран. Пожалуйста, введите игровой аккаунт, на который нужно зачислить валюту.")
 
 # ======================
-# Корзина
+# Корзина (можно оставить стандартную логику для других товаров)
 # ======================
 @router.message(F.text == "🛍 Корзина")
 async def cart_view(message: Message):
     user = await get_or_create_user(message)
-    # Предзагрузка связанного объекта 'game'
-    cart_items = await sync_to_async(list)(
-        CartItem.objects.filter(user=user).select_related('game')
-    )
+    cart_items = await sync_to_async(list)(CartItem.objects.filter(user=user).select_related('game'))
     if not cart_items:
         await message.answer("Ваша корзина пуста.", reply_markup=main_menu())
         return
@@ -404,9 +385,6 @@ async def cb_clear_cart(call: CallbackQuery):
     await call.message.answer("Корзина очищена.")
     await cart_view(call.message)
 
-# ======================
-# Оформление заказа
-# ======================
 @router.callback_query(F.data == "checkout_order")
 async def cb_checkout_order(call: CallbackQuery):
     await call.message.edit_text("Выберите способ оплаты:")
@@ -424,67 +402,77 @@ async def cb_pay_standard(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(settings_obj.request_game_id_text)
     await state.set_state(CheckOutState.waiting_for_game_account)
 
-@router.message(CheckOutState.waiting_for_game_account)
-async def process_game_account(message: Message, state: FSMContext):
-    game_account_info = message.text
-    await state.update_data(game_account_info=game_account_info)
-
-    settings_obj = await get_bot_settings()
-    text = (
-        "💳 Реквизиты для оплаты:\n\n"
-        f"{settings_obj.payment_requisites}\n\n"
-        "После оплаты отправьте чек или PDF‑файл в этот же чат."
-    )
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Вернуться", callback_data="back_to_main")],
-            [InlineKeyboardButton(text="Инфо!", callback_data="info_about_receipt")]
-        ]
-    )
-    await message.answer(text, reply_markup=markup)
-
-    user = await get_or_create_user(message)
-    cart_items = await sync_to_async(list)(CartItem.objects.filter(user=user))
-    for item in cart_items:
-        await sync_to_async(Order.objects.create)(
-            user=user,
-            product_name=item.game.name,
-            price=Decimal("355.00"),
-            is_paid=False,
-            game_account_info=game_account_info
-        )
-
-    await sync_to_async(CartItem.objects.filter(user=user).delete)()
-    await state.clear()
-
+# ===== Оплата с кошелька для донатов =====
 @router.callback_query(F.data == "pay_with_wallet")
-async def cb_pay_with_wallet(call: CallbackQuery):
+async def cb_pay_with_wallet(call: CallbackQuery, state: FSMContext):
     user = await sync_to_async(BotUser.objects.get)(telegram_id=call.from_user.id)
-    cart_items = await sync_to_async(list)(CartItem.objects.filter(user=user))
-
-    if not cart_items:
-        await call.message.answer("Ваша корзина пуста.")
+    data = await state.get_data()
+    # Если данные о донате не сохранены, сообщаем об ошибке
+    if not data.get("donation_id"):
+        await call.message.answer("Донат не выбран. Пожалуйста, выберите донат через каталог.")
         return
 
-    game = cart_items[0].game  # Получаем первую игру из корзины
-    product_id = cart_items[0].game.id  # ID товара, может быть изменено
-    quantity = len(cart_items)  # Количество товаров
-    character_id = "123456789"  # Character ID, должен быть введен пользователем
-    server_id = "3402"  # Сервер, задается статически или вводится пользователем
-    partner_order_id = f"ORDER-{user.telegram_id}-{int(time.time())}"  # Уникальный ID заказа
+    # Переходим к вводу игрового аккаунта
+    await call.message.answer("Введите, пожалуйста, ваш игровой аккаунт (например, ID или никнейм):")
+    await state.set_state(CheckOutState.waiting_for_game_account)
+
+# ===== Обработка ввода игрового аккаунта для доната =====
+
+@router.message(CheckOutState.waiting_for_game_account)
+async def donation_game_account_received(message: Message, state: FSMContext):
+    user = await get_or_create_user(message)
+    data = await state.get_data()
+    game_account = message.text
+
+    donation_id = data.get("donation_id")
+    donation_name = data.get("donation_name")
+    game_name = data.get("game_name")
+    region_name = data.get("region_name")
+    site_price = Decimal(str(data.get("site_price")))  # Цена для запроса к Moogold API
+    bot_price = Decimal(str(data.get("bot_price")))    # Цена списания с кошелька
+
+    if user.balance < bot_price:
+        await message.answer(
+            f"Недостаточно средств на кошельке.\n"
+            f"Ваш баланс: {user.balance:.2f} С, требуется: {bot_price:.2f} С"
+        )
+        await state.clear()
+        return
 
     headers = await moogold_login()
     if not headers:
-        await call.message.answer("Ошибка авторизации в Moogold.")
+        await message.answer("❌ Не удалось авторизоваться в Moogold.")
+        await state.clear()
         return
 
-    result = await moogold_create_order(headers, character_id, server_id, product_id, quantity, partner_order_id)
 
-    if result.get("status"):
-        await call.message.answer(f"✅ Заказ успешно создан! Номер заказа: {result['account_details']['order_id']}.")
-        await sync_to_async(CartItem.objects.filter(user=user).delete)()  # Очищаем корзину
+    character_id = user.telegram_id           
+    server_id = "3402"                         
+    product_id = donation_id                  
+    quantity = 1
+    partner_order_id = f"ORDER-{user.telegram_id}-{int(time.time())}"
+
+    
+    moogold_result = await moogold_create_order(headers, character_id, server_id, product_id, quantity, partner_order_id)
+
+    if moogold_result and moogold_result.get("success"):
+        user.balance -= bot_price
+        await sync_to_async(user.save)()
+
+        await sync_to_async(Order.objects.create)(
+            user=user,
+            product_name=f"{game_name} ({region_name}) — {donation_name}",
+            price=bot_price,
+            is_paid=True,
+            game_account_info=game_account
+        )
+        await message.answer("✅ Заказ успешно оплачен и донат отправлен!")
     else:
-        await call.message.answer(f"❌ Ошибка при создании заказа: {result['message']}")
+        error_text = moogold_result.get("message") if moogold_result else "Неизвестная ошибка."
+        await message.answer(f"❌ Ошибка при оформлении заказа через Moogold: {error_text}")
+
+    await state.clear()
+
 
 # ======================
 # История заказов
@@ -517,53 +505,8 @@ async def support_view(message: Message):
     await message.answer(text, reply_markup=markup)
 
 # ======================
-# Обработчик кнопки "Меню" (Если понадобится для возврата)
+# Обработчик кнопки "Меню"
 # ======================
 @router.message(F.text == "🏠 Меню")
 async def back_to_menu_cmd(message: Message):
     await message.answer("Главное меню:", reply_markup=main_menu())
-
-@router.message(CheckOutState.waiting_for_game_account)
-async def donation_game_account_received(message: Message, state: FSMContext):
-    user = await get_or_create_user(message)
-    data = await state.get_data()
-    game_account = message.text
-
-    donation_id = data["donation_id"]
-    donation_name = data["donation_name"]
-    game_name = data["game_name"]
-    region_name = data["region_name"]
-    price = Decimal(str(data["price"]))
-
-    if user.balance < price:
-        await message.answer(
-            f"Недостаточно средств на кошельке.\n"
-            f"Ваш баланс: {user.balance:.2f} С, требуется: {price:.2f} С"
-        )
-        await state.clear()
-        return
-
-    token = await moogold_login()
-    if not token:
-        await message.answer("❌ Не удалось авторизоваться в Moogold.")
-        await state.clear()
-        return
-
-    moogold_result = await moogold_purchase(token, amount=float(price), user_id=user.telegram_id)
-    if moogold_result.get("success"):
-        user.balance -= price
-        await sync_to_async(user.save)()
-
-        await sync_to_async(Order.objects.create)(
-            user=user,
-            product_name=f"{game_name} ({region_name}) — {donation_name}",
-            price=price,
-            is_paid=True,
-            game_account_info=game_account
-        )
-
-        await message.answer("✅ Заказ успешно оплачен и оформлен!")
-    else:
-        await message.answer("❌ Ошибка при оплате через Moogold.")
-
-    await state.clear()

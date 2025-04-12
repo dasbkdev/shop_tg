@@ -6,7 +6,6 @@ class BotUser(models.Model):
     telegram_id = models.BigIntegerField(unique=True)
     username = models.CharField(max_length=255, blank=True, null=True)
     first_name = models.CharField(max_length=255, blank=True, null=True)
-
     # Дополнительные поля
     region = models.CharField(max_length=255, blank=True, null=True)  # Регион
     registration_date = models.DateTimeField(default=timezone.now)    # Дата регистрации
@@ -54,7 +53,6 @@ class Game(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='games/', blank=True, null=True)  # Картинка для игры
-    # Можно хранить дополнительную инфу, если нужно
 
     def __str__(self):
         return self.name
@@ -80,11 +78,9 @@ class Country(models.Model):
 
 # === Модель для хранения текстов, реквизитов и прочих настроек бота ===
 class BotSettings(models.Model):
-    # Реквизиты для стандартной оплаты
     payment_requisites = models.TextField(
         default="•  💰 Сумма заказа: 355 С\n•  🏦 Мбанк: +996557336612\n•  👤 Получатель: Расим К."
     )
-    # Информация об отправке чека
     info_about_receipt = models.TextField(
         default=(
             "Информация об отправке чека:\n\n"
@@ -93,7 +89,6 @@ class BotSettings(models.Model):
             "Принимаемые через бот банки...\n"
         )
     )
-    # Контакты администратора
     admin_contact = models.CharField(
         max_length=255,
         default="https://t.me/dasbkdev",
@@ -119,11 +114,13 @@ class Region(models.Model):
     def __str__(self):
         return f"{self.game.name} | {self.name}"
 
+
 class DonationItem(models.Model):
     """Предмет доната, привязанный к конкретному региону."""
     region = models.ForeignKey(Region, on_delete=models.CASCADE, related_name='donations')
     name = models.CharField(max_length=255)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    site_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Цена доната на сайте (реальная стоимость)")
+    bot_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Цена, списываемая с кошелька (с комиссией)")
     extra_info = models.TextField(blank=True, null=True)
 
     def __str__(self):

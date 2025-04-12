@@ -7,29 +7,23 @@ from .models import (
     Region, DonationItem
 )
 
-# -- Переводим стандартные заголовки админки (если не используем кастомный AdminSite):
 admin.site.site_header = _("Галактическая Админ-панель")
 admin.site.site_title = _("Галактическое Администрирование")
 admin.site.index_title = _("Добро пожаловать во вселенную управления")
 
 @admin.register(BotUser)
 class BotUserAdmin(admin.ModelAdmin):
-    # Список полей, которые хотим видеть на главной странице списка
     list_display = ('telegram_id', 'username', 'region', 'balance', 'registration_date')
     search_fields = ('telegram_id', 'username', 'region')
-
-    # Группируем поля в форму редактирования, чтобы не прыгать между вкладками
     fieldsets = (
         (_("Основная информация"), {
             'fields': ('telegram_id', 'username', 'first_name', 'region')
         }),
         (_("Баланс и дата регистрации"), {
             'fields': ('balance', 'registration_date'),
-            'classes': ('collapse',),  # можно свернуть по умолчанию
+            'classes': ('collapse',),
         }),
     )
-
-    # Русские названия для админки (опционально, если нужно)
     verbose_name = _("Пользователь бота")
     verbose_name_plural = _("Пользователи бота")
 
@@ -38,9 +32,7 @@ class PaymentRequestAdmin(admin.ModelAdmin):
     list_display = ('user', 'amount', 'status', 'confirmed', 'created_at')
     list_filter = ('confirmed', 'status')
     search_fields = ('user__telegram_id', 'user__username')
-
     readonly_fields = ('receipt_preview',)
-
     fieldsets = (
         (_("Основные данные"), {
             'fields': ('user', 'amount', 'receipt_file', 'status', 'confirmed', 'receipt_preview')
@@ -50,7 +42,6 @@ class PaymentRequestAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Запрос на оплату")
     verbose_name_plural = _("Запросы на оплату")
 
@@ -58,7 +49,6 @@ class PaymentRequestAdmin(admin.ModelAdmin):
         if obj.receipt_file:
             url = obj.receipt_file.url
             name = obj.receipt_file.name.split('/')[-1]
-            # ссылка + встроенный предпросмотр PDF
             return format_html(
                 '<a href="{0}" target="_blank">{1}</a><br>'
                 '<iframe src="{0}" width="600" height="400"></iframe>',
@@ -72,7 +62,6 @@ class OrderAdmin(admin.ModelAdmin):
     list_display = ('id', 'user', 'product_name', 'price', 'is_paid', 'created_at')
     list_filter = ('is_paid',)
     search_fields = ('user__telegram_id', 'user__username', 'product_name')
-
     fieldsets = (
         (_("Информация о заказе"), {
             'fields': ('user', 'product_name', 'game_account_info')
@@ -85,7 +74,6 @@ class OrderAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Заказ")
     verbose_name_plural = _("Заказы")
 
@@ -105,9 +93,7 @@ class RegionInline(admin.StackedInline):
 class GameAdmin(admin.ModelAdmin):
     list_display = ('name',)
     search_fields = ('name',)
-    # Делаем inline для Region, внутри которого уже будет DonationItemInline
     inlines = [RegionInline]
-
     fieldsets = (
         (_("Основная информация"), {
             'fields': ('name', 'description')
@@ -117,7 +103,6 @@ class GameAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Игра")
     verbose_name_plural = _("Игры")
 
@@ -125,7 +110,6 @@ class GameAdmin(admin.ModelAdmin):
 class CartItemAdmin(admin.ModelAdmin):
     list_display = ('user', 'game', 'quantity', 'added_at')
     search_fields = ('user__username', 'game__name')
-
     fieldsets = (
         (_("Основная информация"), {
             'fields': ('user', 'game', 'quantity')
@@ -135,7 +119,6 @@ class CartItemAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Элемент корзины")
     verbose_name_plural = _("Корзина")
 
@@ -143,7 +126,6 @@ class CartItemAdmin(admin.ModelAdmin):
 class CountryAdmin(admin.ModelAdmin):
     list_display = ('name',)
     search_fields = ('name',)
-
     verbose_name = _("Страна")
     verbose_name_plural = _("Страны")
 
@@ -167,7 +149,6 @@ class BotSettingsAdmin(admin.ModelAdmin):
             'fields': ('request_game_id_text',)
         }),
     )
-
     verbose_name = _("Настройка бота")
     verbose_name_plural = _("Настройки бота")
 
@@ -176,7 +157,6 @@ class RegionAdmin(admin.ModelAdmin):
     list_display = ('name', 'game')
     search_fields = ('name', 'game__name')
     inlines = [DonationItemInline]
-
     fieldsets = (
         (_("Основные данные"), {
             'fields': ('game', 'name', 'description')
@@ -186,24 +166,21 @@ class RegionAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Регион")
     verbose_name_plural = _("Регионы")
 
 @admin.register(DonationItem)
 class DonationItemAdmin(admin.ModelAdmin):
-    list_display = ('name', 'region', 'price')
+    list_display = ('name', 'region', 'site_price', 'bot_price')
     search_fields = ('name', 'region__name')
-
     fieldsets = (
         (_("Основные данные"), {
-            'fields': ('region', 'name', 'price')
+            'fields': ('region', 'name', 'site_price', 'bot_price')
         }),
         (_("Дополнительно"), {
             'fields': ('extra_info',),
             'classes': ('collapse',),
         }),
     )
-
     verbose_name = _("Предмет доната")
     verbose_name_plural = _("Предметы доната")

@@ -1,12 +1,7 @@
-from django.urls import path, include
 from django.contrib import admin
-from apps.shop.admin import admin
-from django.conf import settings
-from django.conf.urls.static import static
-
+from django.urls import path, include
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path('admin/', admin.site.urls),  # ← ЭТО ОБЯЗАТЕЛЬНО ДОЛЖНО БЫТЬ
+    path('', include('apps.shop.urls')),  # Твой магазин
 ]
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

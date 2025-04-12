@@ -1,10 +1,11 @@
 import asyncio
 import django
+import sys
+import os
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from apps.shop.handlers import router
 import logging
-import os
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if project_root not in sys.path:
@@ -20,7 +21,6 @@ from django.conf import settings
 
 bot = Bot(token=settings.BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher(storage=MemoryStorage())
-
 
 dp.include_router(router)
 
